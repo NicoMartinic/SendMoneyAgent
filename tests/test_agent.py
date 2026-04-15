@@ -151,6 +151,14 @@ class TestAgentModelSelection(unittest.TestCase):
             agent_module.INSTRUCTION,
         )
         self.assertIn(
+            "If the user already supplied a valid delivery method in the same turn, include `delivery_method` immediately",
+            agent_module.INSTRUCTION,
+        )
+        self.assertIn(
+            "Spanish delivery-method phrases such as `transferencia bancaria`, `retiro en efectivo`, `billetera móvil`, and `dinero móvil` count as provided delivery methods",
+            agent_module.INSTRUCTION,
+        )
+        self.assertIn(
             "max 2 decimal places",
             agent_module.INSTRUCTION,
         )

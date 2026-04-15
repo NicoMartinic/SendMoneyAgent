@@ -87,6 +87,15 @@ _SOURCE_AMOUNT_CURRENCY_ALIASES: dict[str, list[str]] = {
     ],
 }
 
+_DELIVERY_METHOD_DISPLAY: dict[str, dict[str, str]] = {
+    "bank_transfer": {"en": "Bank Transfer", "es": "Transferencia bancaria"},
+    "cash_pickup": {"en": "Cash Pickup", "es": "Retiro en efectivo"},
+    "mobile_wallet": {"en": "Mobile Wallet", "es": "Billetera móvil"},
+    "mobile_money": {"en": "Mobile Money", "es": "Dinero móvil"},
+    "upi": {"en": "UPI", "es": "UPI"},
+    "pix": {"en": "PIX", "es": "PIX"},
+}
+
 MIN_AMOUNT_USD = 10.00
 MAX_AMOUNT_USD = 10_000.0
 SOURCE_AMOUNT_CURRENCY = "USD"
@@ -280,6 +289,16 @@ def _amount_has_more_than_two_decimals(raw_amount: float) -> bool:
     except (InvalidOperation, ValueError):
         return True
     return normalized.as_tuple().exponent < -2
+
+
+def _localize_delivery_method(method_key: str, active_language: Optional[str]) -> str:
+    """Return a user-facing delivery-method label in the active session language."""
+    localized = _DELIVERY_METHOD_DISPLAY.get(method_key, {})
+    if active_language in localized:
+        return localized[active_language]
+    if "en" in localized:
+        return localized["en"]
+    return method_key.replace("_", " ").title()
 
 
 def _name_seems_incomplete(name: str) -> bool:
@@ -667,6 +686,7 @@ def confirm_transfer(
     country_data = SUPPORTED_COUNTRIES[state["recipient_country"]]
     local_amount = round(state["amount_usd"] * country_data["rate"], 2)
     ref = f"TXN{random.randint(100_000, 999_999)}"
+    active_language = tool_context.state.get("active_language")
 
     state.update(
         status="confirmed",
@@ -689,7 +709,7 @@ def confirm_transfer(
             "amount_sent":       f"${state['amount_usd']:,.2f} USD",
             "amount_received":   f"{local_amount:,.2f} {country_data['currency']}",
             "exchange_rate":     f"1 USD = {country_data['rate']} {country_data['currency']}",
-            "delivery_method":   state["delivery_method"].replace("_", " ").title(),
+            "delivery_method":   _localize_delivery_method(state["delivery_method"], active_language),
             "status":            "✅ Confirmed",
             "reference_number":  ref,
         },

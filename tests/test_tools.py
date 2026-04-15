@@ -461,6 +461,13 @@ class TestConfirmTransfer(unittest.TestCase):
         r = confirm_transfer(make_ctx(full_state()), user_confirmed=True)
         self.assertRegex(r["reference_number"], r"^TXN\d{6}$")
 
+    def test_summary_localizes_delivery_method_for_spanish_sessions(self):
+        ctx = make_ctx(full_state(country="Mexico", method="bank_transfer"))
+        ctx.state["active_language"] = "es"
+        r = confirm_transfer(ctx, user_confirmed=True)
+        self.assertTrue(r["success"])
+        self.assertEqual(r["summary"]["delivery_method"], "Transferencia bancaria")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 class TestResetTransfer(unittest.TestCase):
