@@ -13,7 +13,7 @@ The agent guides a user through an international money transfer in natural conve
 |------|-----------------|
 | 1 | **Recipient name** — full first + last name of who receives the money |
 | 2 | **Destination country** — validated against supported list (fuzzy-matched) |
-| 3 | **Amount (USD)** — up to $10,000 per transfer |
+| 3 | **Amount (USD)** — from $10.00 to $10,000 per transfer, max 2 decimal places |
 | 4 | **Delivery method** — options depend on the country; free-text normalised |
 
 It handles:
@@ -24,7 +24,10 @@ It handles:
 - Country-specific delivery method validation  
 - Free-text delivery method input ("mobile wallet", "bank", "mpesa" → canonical keys)  
 - Fuzzy country matching (aliases, prefixes, case-insensitive)  
+- USD-only source amount validation  
+- Amount precision enforcement (at most 2 decimal places)  
 - A final confirmation step requiring **explicit user_confirmed=True** before committing  
+- Confirmed transfers are immutable; changes require starting a new transfer  
 
 ---
 
@@ -37,7 +40,8 @@ send_money_agent/
 │   ├── agent.py             # Agent definition + model selection
 │   └── tools.py             # All tools with mock validation logic
 ├── tests/
-│   └── test_tools.py        # Comprehensive pytest test suite
+│   ├── test_agent.py        # Agent prompt/model selection regression tests
+│   └── test_tools.py        # Tool behavior and flow regression tests
 ├── main.py                  # Interactive CLI runner
 ├── requirements.txt
 ├── Dockerfile
@@ -122,16 +126,17 @@ docker compose run --rm --service-ports send-money-agent adk web --host 0.0.0.0 
 |------|---------------|
 | `gemini` | `gemini-2.5-flash` |
 | `gemini_pro` | `gemini-2.5-pro` |
-| `claude` | `litellm/anthropic/claude-sonnet-4-6` |
-| `claude_opus` | `litellm/anthropic/claude-opus-4-6` |
-| `chatgpt` | `litellm/openai/gpt-5.4-mini` |
-| `gpt54` | `litellm/openai/gpt-5.4` |
-| `gpt54mini` | `litellm/openai/gpt-5.4-mini` |
-| `gpt5` | `litellm/openai/gpt-5.4` |
+| `claude` | `anthropic/claude-sonnet-4-6` |
+| `claude_opus` | `anthropic/claude-opus-4-6` |
+| `chatgpt` | `openai/gpt-5.4-mini` |
+| `gpt54` | `openai/gpt-5.4` |
+| `gpt54mini` | `openai/gpt-5.4-mini` |
+| `gpt5` | `openai/gpt-5.4` |
 
 Legacy aliases still accepted for compatibility:
-- `gpt4` -> `litellm/openai/gpt-5.4-mini`
-- `gpt4o` -> `litellm/openai/gpt-5.4-mini`
+- `gpt4` -> `openai/gpt-5.4-mini`
+- `gpt4o` -> `openai/gpt-5.4-mini`
+- `litellm/...` prefixed model values are normalized automatically
 
 ---
 
@@ -159,13 +164,20 @@ Legacy aliases still accepted for compatibility:
 | Tool | Purpose |
 |------|---------|
 | `get_transfer_state` | Read current state; find what's missing. Guards: incomplete names count as missing. |
-| `update_transfer_details` | Persist collected/corrected fields. Hard-rejects incomplete names, invalid countries/methods/amounts. |
+| `update_transfer_details` | Persist collected/corrected fields. Hard-rejects incomplete names, non-USD source amounts, invalid countries/methods, and amounts outside the allowed range or precision. |
 | `flag_ambiguous_input` | Log ambiguous input; returns structured clarification questions. |
 | `get_country_info` | Validate country (fuzzy), get delivery methods. |
 | `get_supported_destinations` | Return all supported destination countries (optionally with currency + methods). |
 | `get_transfer_policies` | Return user-facing limits, required fields, and non-sensitive transfer rules. |
 | `confirm_transfer` | Finalise transfer. Requires `user_confirmed=True` as a hard code gate. |
 | `reset_transfer` | Clear state, start over. |
+
+## Runtime rules
+
+- Source transfer amounts must be entered in `USD` only.
+- Transfer amounts must be between `$10.00` and `$10,000.00` and use at most 2 decimal places.
+- Confirmed transfers cannot be edited; if details change, start a new transfer.
+- Mutating tools require fresh `read_token` and `expected_version` values from `get_transfer_state`.
 
 ---
 
@@ -207,15 +219,3 @@ Agent: ✅ Transfer confirmed! Reference: TXN847291
 - **Self-contained** — works fully offline except for the LLM API call itself.
 
 ---
-
-## What changed from v1
-
-| Area | v1 | v2 |
-|------|----|----|
-| Incomplete name | Saved with warning (LLM could ignore) | Hard `success=False`; name never saved |
-| `confirm_transfer` gate | Prompt-only | `user_confirmed=True` required in code |
-| Country matching | Exact case-insensitive only | + aliases + prefix matching |
-| Delivery method input | Exact canonical key required | Free-text normalised (`mobile wallet` → `mobile_wallet`) |
-| `get_transfer_state` | Simple field check | Also catches incomplete names already in state |
-| README tool table | Missing capability-introspection tools | All 8 tools listed |
-| Tests | None | 90+ pytest cases across all paths |

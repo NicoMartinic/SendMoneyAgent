@@ -39,6 +39,8 @@ from send_money_agent.tools import (
     reset_transfer,
     _normalize_country,
     _normalize_delivery_method,
+    _amount_has_more_than_two_decimals,
+    _normalize_source_amount_currency,
     _name_seems_incomplete,
 )
 
@@ -129,10 +131,29 @@ class TestNormalizeDeliveryMethod(unittest.TestCase):
     def test_mobile_money(self):      self.assertEqual(_normalize_delivery_method("mobile money"), "mobile_money")
     def test_mpesa(self):             self.assertEqual(_normalize_delivery_method("mpesa"), "mobile_money")
     def test_mpesa_dash(self):        self.assertEqual(_normalize_delivery_method("m-pesa"), "mobile_money")
+    def test_spanish_bank_transfer(self): self.assertEqual(_normalize_delivery_method("transferencia bancaria"), "bank_transfer")
+    def test_spanish_cash_pickup(self): self.assertEqual(_normalize_delivery_method("retiro en efectivo"), "cash_pickup")
+    def test_spanish_wallet_accented(self): self.assertEqual(_normalize_delivery_method("billetera móvil"), "mobile_wallet")
+    def test_spanish_mobile_money_accented(self): self.assertEqual(_normalize_delivery_method("dinero móvil"), "mobile_money")
     def test_upi(self):               self.assertEqual(_normalize_delivery_method("upi"), "upi")
     def test_pix(self):               self.assertEqual(_normalize_delivery_method("pix"), "pix")
     def test_unknown(self):           self.assertIsNone(_normalize_delivery_method("carrier pigeon"))
     def test_empty(self):             self.assertIsNone(_normalize_delivery_method(""))
+
+
+class TestNormalizeSourceAmountCurrency(unittest.TestCase):
+    def test_usd_code(self):          self.assertEqual(_normalize_source_amount_currency("USD"), "USD")
+    def test_usd_code_with_whitespace(self): self.assertEqual(_normalize_source_amount_currency("  usd  "), "USD")
+    def test_dollars(self):           self.assertEqual(_normalize_source_amount_currency("dollars"), "USD")
+    def test_spanish_dolares(self):   self.assertEqual(_normalize_source_amount_currency("dólares"), "USD")
+    def test_symbol(self):            self.assertEqual(_normalize_source_amount_currency("$"), "USD")
+    def test_unknown(self):           self.assertIsNone(_normalize_source_amount_currency("reales"))
+
+
+class TestAmountPrecision(unittest.TestCase):
+    def test_integer_amount_allowed(self):    self.assertFalse(_amount_has_more_than_two_decimals(25))
+    def test_two_decimal_amount_allowed(self): self.assertFalse(_amount_has_more_than_two_decimals(25.55))
+    def test_three_decimal_amount_rejected(self): self.assertTrue(_amount_has_more_than_two_decimals(25.555))
 
 
 class TestNameCompleteness(unittest.TestCase):
@@ -152,6 +173,10 @@ class TestGetTransferState(unittest.TestCase):
         r = get_transfer_state(make_ctx())
         self.assertFalse(r["is_complete"])
         self.assertEqual(len(r["missing_fields"]), 4)
+        self.assertIn("read_token", r)
+        self.assertEqual(r["expected_version"], 0)
+        self.assertTrue(r["can_update_details"])
+        self.assertEqual(r["supported_source_amount_currencies"], ["USD"])
 
     def test_complete_state(self):
         r = get_transfer_state(make_ctx(full_state()))
@@ -162,6 +187,18 @@ class TestGetTransferState(unittest.TestCase):
         r = get_transfer_state(make_ctx(full_state(name="Maria")))
         self.assertFalse(r["is_complete"])
         self.assertIn("recipient_name", r["missing_fields"])
+
+    def test_confirmed_state_is_not_editable(self):
+        ctx = make_ctx(full_state(status="confirmed"))
+        ctx.state["transfer_state"]["reference_number"] = "TXN000001"
+        r = get_transfer_state(ctx)
+        self.assertFalse(r["can_update_details"])
+
+    def test_active_language_is_surface_when_present(self):
+        ctx = make_ctx()
+        ctx.state["active_language"] = "es"
+        r = get_transfer_state(ctx)
+        self.assertEqual(r["active_language"], "es")
 
 
 class TestStateContract(unittest.TestCase):
@@ -274,9 +311,42 @@ class TestUpdateTransferDetails(unittest.TestCase):
         r = update_transfer_details(make_ctx(), amount_usd=10_000)
         self.assertTrue(r["success"])
 
-    def test_amount_rounded(self):
-        r = update_transfer_details(make_ctx(), amount_usd=123.456)
-        self.assertEqual(r["current_state"]["amount_usd"], 123.46)
+    def test_below_minimum_rejected_with_minimum_message(self):
+        r = update_transfer_details(make_ctx(), amount_usd=9.99)
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error"], "Minimum transfer amount is $10.00 USD.")
+
+    def test_amount_with_more_than_two_decimals_rejected(self):
+        ctx = make_ctx()
+        r = update_transfer_details(ctx, amount_usd=123.456)
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error"], "Amount must have at most 2 decimal places.")
+        self.assertIsNone(ctx.state.get("transfer_state", {}).get("amount_usd"))
+
+    def test_amount_with_two_decimals_kept_exact(self):
+        r = update_transfer_details(make_ctx(), amount_usd=123.45)
+        self.assertTrue(r["success"])
+        self.assertEqual(r["current_state"]["amount_usd"], 123.45)
+
+    def test_amount_with_usd_alias_is_accepted(self):
+        r = update_transfer_details(
+            make_ctx(),
+            amount_usd=25.0,
+            source_amount_currency="dólares",
+        )
+        self.assertTrue(r["success"])
+        self.assertEqual(r["validated_source_amount_currency"], "USD")
+
+    def test_non_usd_source_currency_is_rejected(self):
+        ctx = make_ctx()
+        r = update_transfer_details(
+            ctx,
+            amount_usd=25.0,
+            source_amount_currency="reales",
+        )
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error_code"], "UNSUPPORTED_SOURCE_AMOUNT_CURRENCY")
+        self.assertIsNone(ctx.state.get("transfer_state", {}).get("amount_usd"))
 
     # Delivery method
     def test_free_text_method_normalised(self):
@@ -310,12 +380,12 @@ class TestUpdateTransferDetails(unittest.TestCase):
         self.assertNotIn("ambiguity_warnings", r)
 
     # Misc
-    def test_no_args_is_noop(self):
+    def test_no_args_is_rejected(self):
         ctx = make_ctx(full_state())
         r = update_transfer_details(ctx)
-        self.assertTrue(r["success"])
-        self.assertEqual(r["updated_fields"], [])
-        self.assertTrue(r["is_complete"])
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error"], "No fields provided. Pass at least one field to update.")
+        self.assertEqual(ctx.state["transfer_state"]["recipient_name"], "Maria Santos")
 
     def test_whitespace_trimmed_name(self):
         ctx = make_ctx()
@@ -328,6 +398,15 @@ class TestUpdateTransferDetails(unittest.TestCase):
         r = update_transfer_details(ctx, delivery_method="BANK_TRANSFER")
         self.assertTrue(r["success"])
         self.assertEqual(r["current_state"]["delivery_method"], "bank_transfer")
+
+    def test_confirmed_transfer_cannot_be_edited(self):
+        ctx = make_ctx(full_state(status="confirmed"))
+        ctx.state["transfer_state"]["reference_number"] = "TXN000001"
+        original_amount = ctx.state["transfer_state"]["amount_usd"]
+        r = update_transfer_details(ctx, amount_usd=999.0)
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error_code"], "CONFIRMED_TRANSFER_IMMUTABLE")
+        self.assertEqual(ctx.state["transfer_state"]["amount_usd"], original_amount)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -457,12 +536,15 @@ class TestCapabilityTools(unittest.TestCase):
     def test_transfer_policies(self):
         r = get_transfer_policies()
         self.assertEqual(r["source_amount_currency"], "USD")
-        self.assertEqual(r["minimum_amount_usd"], 0.01)
+        self.assertEqual(r["minimum_amount_usd"], 10.00)
         self.assertEqual(r["maximum_amount_usd"], 10_000.0)
         self.assertIn("recipient_name", r["required_fields"])
         self.assertIn("delivery_method", r["required_fields"])
         self.assertTrue(r["requires_explicit_user_confirmation"])
         self.assertIn("bank_transfer", r["supported_delivery_methods"])
+        self.assertIn("Source transfer amounts must be provided in USD only.", r["notes"])
+        self.assertIn("Source transfer amounts can use at most 2 decimal places.", r["notes"])
+        self.assertIn("Confirmed transfers cannot be edited", " ".join(r["notes"]))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -568,6 +650,21 @@ class TestIntegrationFlows(unittest.TestCase):
         confirm_transfer(ctx, user_confirmed=True)
         reset_transfer(ctx)
         self.assertFalse(confirm_transfer(ctx, user_confirmed=True)["success"])
+
+    def test_confirmed_transfer_rejects_followup_edit(self):
+        ctx = make_ctx()
+        update_transfer_details(
+            ctx,
+            recipient_name="Maria Santos",
+            recipient_country="Philippines",
+            amount_usd=350.0,
+            delivery_method="mobile wallet",
+        )
+        confirm_transfer(ctx, user_confirmed=True)
+        r = update_transfer_details(ctx, amount_usd=400.0)
+        self.assertFalse(r["success"])
+        self.assertEqual(r["error_code"], "CONFIRMED_TRANSFER_IMMUTABLE")
+        self.assertEqual(ctx.state["transfer_state"]["amount_usd"], 350.0)
 
     def test_all_fields_at_once(self):
         ctx = make_ctx()
