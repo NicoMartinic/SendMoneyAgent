@@ -1,0 +1,11 @@
+# Core ADK framework
+google-adk>=0.4.0
+
+# LiteLLM bridge — needed for Claude and ChatGPT backends
+litellm>=1.40.0
+
+# Env file loading (optional quality-of-life)
+python-dotenv>=1.0.0
+
+# Test runner
+pytest>=8.0.0

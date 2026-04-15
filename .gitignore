@@ -1,0 +1,74 @@
+# --- Secrets / local config ---
+.env
+.env.*
+!.env.example
+
+# --- Python bytecode / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Native / compiled extensions ---
+*.so
+*.dylib
+*.dll
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Packaging / build artifacts ---
+build/
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+
+# --- Test / coverage / type-check artifacts ---
+.pytest_cache/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- Logs / runtime artifacts ---
+*.log
+logs/
+*.pid
+*.pid.lock
+
+# --- Local data / databases ---
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+
+# --- Docker local overrides ---
+docker-compose.override.yml
+
+# --- Local tooling artifacts ---
+.codex

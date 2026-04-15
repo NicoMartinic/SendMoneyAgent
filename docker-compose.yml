@@ -1,0 +1,15 @@
+services:
+  send-money-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: send-money-agent:latest
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8002:8002"
+      - "8082:8082"
+    stdin_open: true
+    tty: true
+    command: ["python", "main.py"]
